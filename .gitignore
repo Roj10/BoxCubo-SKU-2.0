@@ -1,0 +1,31 @@
+# Dependências
+node_modules/
+
+# Builds
+frontend/dist/
+backend/dist/
+
+# Banco de dados local (SQLite) e backups
+*.db
+*.db-journal
+backend/backups/
+
+# Ambiente
+.env
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Logs de dev
+backend/_dev.out
+backend/_dev.err
+
+# Dados e arquivos internos da empresa (não vão para o repositório)
+.planning/
+*.pdf
+Marca_*.png
+backups/
+backend/scripts/*.json
+frontend/.env
+*.tgz

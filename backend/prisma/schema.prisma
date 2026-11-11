@@ -1,0 +1,250 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Client {
+  id         String    @id @default(cuid())
+  nome       String
+  cnpj       String?
+  endereco   String?
+  machines   Machine[]
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
+}
+
+model Machine {
+  id                String             @id @default(cuid())
+  serial_number     String?            @unique // opcional no cadastro; obrigatório para entrar no Flash
+  product_type      String
+  mac_address       String?
+  support_plan      Boolean            @default(false)
+  camera            Boolean            @default(false) // versão com câmera (BoxCubo V2)
+  type              String
+  status            String             @default("AGUARDANDO_PRODUCAO")
+  deadline          DateTime?          // prazo: da fabricação até a entrega
+  created_by        String
+  client_id         String?
+  client            Client?            @relation(fields: [client_id], references: [id])
+  production_stages ProductionStage[]
+  deliveries        Delivery[]
+  returns           Return[]
+  production_order  ProductionOrder?
+  created_at        DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+}
+
+// Ordem de Produção preenchida no site (checklist de montagem/inspeção)
+// data = JSON com campos e checks; o formato acompanha o template do produto
+model ProductionOrder {
+  id         String   @id @default(cuid())
+  machine_id String   @unique
+  machine    Machine  @relation(fields: [machine_id], references: [id])
+  data       String   @default("{}")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("production_orders")
+}
+
+model ProductionStage {
+  id           String    @id @default(cuid())
+  machine_id   String
+  machine      Machine   @relation(fields: [machine_id], references: [id])
+  stage        String    // RECEBIMENTO | MONTAGEM | FLASH_FIRMWARE | TESTE | EMBALAGEM
+  started_at   DateTime  @default(now())
+  completed_at DateTime?
+  created_at   DateTime  @default(now())
+
+  @@map("production_stages")
+}
+
+model Delivery {
+  id           String    @id @default(cuid())
+  machine_id   String
+  machine      Machine   @relation(fields: [machine_id], references: [id])
+  carrier      String    @default("")
+  pickup_date  DateTime?
+  expected_date DateTime?
+  status       String    @default("AGUARDANDO_COLETA")
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  @@map("deliveries")
+}
+
+model Return {
+  id          String   @id @default(cuid())
+  machine_id  String
+  machine     Machine  @relation(fields: [machine_id], references: [id])
+  reason      String
+  condition   String
+  destination String
+  created_at  DateTime @default(now())
+
+  @@map("returns")
+}
+
+model Material {
+  id            String     @id @default(cuid())
+  name          String
+  sku           String?    @unique // código SKU: GRUPO-CLASSE-FINAL (ex: ELE-RES-10). Opcional.
+  unit          String     @default("un") // unidade de medida (un, m, g, ml...)
+  current_stock Float      @default(0)
+  full_stock    Float      @default(0)    // estoque "cheio" — base para o alerta de 20%
+  price         Float?     // preço unitário de compra (usado na aba Compras)
+  purchase_link String?    // link do fornecedor/loja para comprar o item
+  manufactured  Boolean    @default(false) // subconjunto fabricado internamente (tem receita própria — BOM multinível)
+  suppliers     MaterialSupplier[]                        // fornecedores (o 1º é o principal)
+  image         MaterialImage?                            // foto do item
+  image_updated_at DateTime?                              // quando a foto mudou (para o navegador não usar a antiga)
+  rack          StorageRack? @relation(fields: [rack_id], references: [id], onDelete: SetNull)
+  rack_id       String?                                   // estante onde fica guardado (E1, E2...)
+  rack_level    Int?                                      // prateleira dentro da estante (P1, P2...)
+  rack_box      Int?                                      // caixa dentro da prateleira (C1, C2...); vazio = solto na prateleira
+  edited_by     String?                                   // quem fez a última edição do cadastro
+  edited_at     DateTime?                                 // quando foi a última edição
+  bom_items     BomItem[]  @relation("BomMaterial")      // receitas em que este material entra
+  components    BomItem[]  @relation("MaterialComponents") // receita deste material (se fabricado)
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+
+  @@map("materials")
+}
+
+// Estante do almoxarifado (E1, E2...). Cada uma tem N prateleiras (P1..Pn);
+// o material guarda a estante (rack_id) e a prateleira (rack_level).
+model StorageRack {
+  id         String     @id @default(cuid())
+  number     Int        @unique // 1 = E1
+  levels     Int        @default(1) // quantidade de prateleiras
+  note       String?    // ex: "perto da bancada de montagem"
+  materials  Material[]
+  shelves    StorageShelf[]
+  created_at DateTime   @default(now())
+  updated_at DateTime   @updatedAt
+
+  @@map("storage_racks")
+}
+
+// Prateleira de uma estante: guarda quantas caixas (C1..Cn) ela tem.
+// Só existe linha para prateleira que tem caixa; sem linha = 0 caixas.
+model StorageShelf {
+  id      String      @id @default(cuid())
+  rack    StorageRack @relation(fields: [rack_id], references: [id], onDelete: Cascade)
+  rack_id String
+  level   Int         // 1 = P1
+  boxes   Int         @default(0)
+
+  @@unique([rack_id, level])
+  @@map("storage_shelves")
+}
+
+// Item de receita. O "pai" é um produto (product_type) OU um material fabricado
+// (parent_material_id) — exatamente um dos dois é preenchido.
+model BomItem {
+  id                 String    @id @default(cuid())
+  product_type       String?   // BOXCUBO_V2 | SLIM | VISION | EYE (receita de nível 1 da máquina)
+  parent_material_id String?   // receita de um subconjunto fabricado (nível 2+)
+  parent_material    Material? @relation("MaterialComponents", fields: [parent_material_id], references: [id], onDelete: Cascade)
+  material_id        String
+  material           Material  @relation("BomMaterial", fields: [material_id], references: [id], onDelete: Cascade)
+  quantity           Float     @default(1) // quantidade consumida por unidade produzida
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  @@unique([product_type, material_id])
+  @@unique([parent_material_id, material_id])
+  @@map("bom_items")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  entity_type String   // Machine | Delivery | Return | ProductionStage
+  entity_id   String
+  action      String   // CREATE | UPDATE | STATUS_CHANGE | DELETE
+  actor       String   // sem login: created_by / actor do body, ou "Sistema"
+  summary     String   // descrição legível em pt-BR
+  metadata    String?  // JSON opcional com de/para
+  created_at  DateTime @default(now())
+
+  @@index([entity_type, entity_id])
+  @@index([created_at])
+  @@map("audit_logs")
+}
+
+// Fornecedores de cada material, com o código do item em cada um.
+// position 0 = fornecedor principal (é o que entra no pedido da Reposição).
+model MaterialSupplier {
+  id          String   @id @default(cuid())
+  material_id String
+  material    Material @relation(fields: [material_id], references: [id], onDelete: Cascade)
+  name        String
+  code        String?  // código do item no catálogo do fornecedor
+  position    Int      @default(0)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([material_id, name])
+  @@index([name])
+  @@map("material_suppliers")
+}
+
+// Movimentações do estoque de materiais (entrada, saída, produção, fabricação,
+// ajuste, estorno). Cada uma tem os itens com o estoque antes e depois.
+model MaterialMovement {
+  id             String                 @id @default(cuid())
+  type           String                 // ENTRADA | SAIDA | PRODUCAO | PRODUCAO_CANCELADA | FABRICACAO | AJUSTE | ESTORNO
+  actor          String                 // quem registrou (campo Responsável, sem login)
+  note           String?                // observação / cliente
+  ref            String?                // referência: série da máquina, subconjunto fabricado...
+  reverses_id    String?                // estorno: movimentação que ele desfaz
+  reversed_by_id String?                // preenchido quando esta foi estornada
+  items          MaterialMovementItem[]
+  created_at     DateTime               @default(now())
+
+  @@index([created_at])
+  @@map("material_movements")
+}
+
+model MaterialMovementItem {
+  id            String           @id @default(cuid())
+  movement_id   String
+  movement      MaterialMovement @relation(fields: [movement_id], references: [id], onDelete: Cascade)
+  material_id   String           // sem relação: o histórico fica mesmo se o material for apagado
+  material_name String
+  sku           String?
+  unit          String
+  quantity      Float            // positivo entra, negativo sai
+  before        Float
+  after         Float
+
+  @@index([material_id])
+  @@map("material_movement_items")
+}
+
+// Estoque mínimo por produto: "manter material para N máquinas". O mínimo de
+// cada material sai da receita (subconjuntos são abertos nos componentes).
+model ProductStockTarget {
+  product_type String   @id // BOXCUBO_V2 | SLIM | VISION | EYE
+  min_machines Int      @default(0)
+  updated_at   DateTime @updatedAt
+
+  @@map("product_stock_targets")
+}
+
+// Foto de cada material, guardada no próprio banco (já reduzida pelo
+// navegador, ~100 KB): entra no backup automático junto com o resto.
+model MaterialImage {
+  material_id String   @id
+  material    Material @relation(fields: [material_id], references: [id], onDelete: Cascade)
+  data        Bytes
+  mime        String   // image/jpeg
+  updated_at  DateTime @updatedAt
+
+  @@map("material_images")
+}

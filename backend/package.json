@@ -1,0 +1,24 @@
+{
+  "name": "boxcubo-backend",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "importar-sku": "node scripts/importar-sku.js",
+    "sincronizar-estoque": "node scripts/sincronizar-estoque.js"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "@prisma/client": "^5.21.1",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/cors": "^2.8.17",
+    "@types/node": "^22.7.7",
+    "prisma": "^5.21.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.6.3"
+  }
+}
