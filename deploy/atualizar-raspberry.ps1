@@ -15,14 +15,21 @@
 $ErrorActionPreference = 'Stop'
 $deploy = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $deploy
-# IP do Raspberry: variável de ambiente BOXCUBO_HOST ou pergunta na hora
+# IP do Raspberry: variável BOXCUBO_HOST, ou o último usado (deploy\raspberry-ip.txt,
+# fica só neste PC), ou pergunta na hora. Precisa ser um IP, ex: 192.168.0.10
+$ipFile = Join-Path $deploy 'raspberry-ip.txt'
 $hostIp = $env:BOXCUBO_HOST
-if (-not $hostIp) { $hostIp = Read-Host 'IP do Raspberry' }
+if (-not $hostIp -and (Test-Path $ipFile)) { $hostIp = (Get-Content $ipFile -Raw).Trim() }
+while ($hostIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+  if ($hostIp) { Write-Host "'$hostIp' não é um IP. Digite os números, ex: 192.168.0.10" -ForegroundColor Yellow }
+  $hostIp = (Read-Host 'IP do Raspberry (números, ex: 192.168.0.10)').Trim()
+}
+Set-Content -Path $ipFile -Value $hostIp -Encoding ascii
 
 function Parar($msg) { Write-Host "`n$msg" -ForegroundColor Red; Read-Host 'Aperte Enter para fechar'; exit 1 }
 
 Write-Host 'Atualizar o Controle BoxCubo no Raspberry' -ForegroundColor Cyan
-$user = Read-Host "Usuário do Raspberry ($hostIp)"
+$user = (Read-Host "Usuário do Raspberry em $hostIp (o mesmo do ssh, ex: pi)").Trim()
 if (-not $user) { Parar 'Usuário não informado.' }
 
 Write-Host "`n== Build do frontend ==" -ForegroundColor Cyan

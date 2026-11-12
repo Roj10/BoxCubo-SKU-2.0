@@ -29,3 +29,4 @@ backups/
 backend/scripts/*.json
 frontend/.env
 *.tgz
+deploy/raspberry-ip.txt

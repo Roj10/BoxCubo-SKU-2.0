@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Plus, Minus, X, Trash2, Search, Warehouse, Pencil, Check } from 'lucide-react'
+import { Plus, Minus, X, Trash2, Search, Warehouse, Pencil, Check, ChevronRight } from 'lucide-react'
 import type { LocationsData, PlacedMaterial, StorageRack } from '../../types/material'
 import SkuTag from './SkuTag'
 import { card, inputClass, labelClass, matches, imageUrl, lastActor, fmtQty, rackColor, rackNumberOf, locLabel } from './shared'
@@ -37,7 +37,9 @@ export default function LocalizacaoTab({ reloadKey, onChanged, showToast, initia
   // você escolher onde guardar (na faixa "Aguardando lugar").
   const focusedRef = useRef(false)
   const [pendingId, setPendingId] = useState<string | null>(null)
-  const blink = (id: string) => setTimeout(() => {
+  // material a destacar: a prateleira dele se abre sozinha para ele aparecer
+  const [focusTarget, setFocusTarget] = useState<string | null>(null)
+  const blink = (id: string) => { setFocusTarget(id); return setTimeout(() => {
     const el = document.querySelector<HTMLElement>(`[data-mat-id="${id}"]`)
     if (!el) return
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -45,7 +47,7 @@ export default function LocalizacaoTab({ reloadKey, onChanged, showToast, initia
     void el.offsetWidth // reinicia a animação
     el.classList.add('loc-blink')
     setTimeout(() => el.classList.remove('loc-blink'), 4500)
-  }, 150)
+  }, 150) }
   useEffect(() => {
     if (!focusId || !data || focusedRef.current) return
     focusedRef.current = true
@@ -170,7 +172,7 @@ export default function LocalizacaoTab({ reloadKey, onChanged, showToast, initia
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4 mb-6">
           {data.racks.map((r) => (
-            <RackCard key={r.id} rack={r} all={all} highlight={q ? new Set(found.map((f) => f.id)) : null}
+            <RackCard key={r.id} rack={r} all={all} highlight={q ? new Set(found.map((f) => f.id)) : null} focusId={focusTarget}
               onLevels={(levels) => !needActor() && call(`/api/locations/racks/${r.id}`, 'PATCH', { levels, actor: actor.trim() }, `E${r.number} agora tem ${levels} prateleira(s).`)}
               onNote={(note) => !needActor() && call(`/api/locations/racks/${r.id}`, 'PATCH', { note, actor: actor.trim() })}
               onDelete={() => !needActor() && call(`/api/locations/racks/${r.id}?actor=${encodeURIComponent(actor.trim())}`, 'DELETE', undefined,
@@ -192,7 +194,8 @@ export default function LocalizacaoTab({ reloadKey, onChanged, showToast, initia
 }
 
 // ── Estante ───────────────────────────────────────────────────────────────
-function RackCard({ rack, all, highlight, onLevels, onNote, onDelete, onAssign, onRemove, onBoxes }: {
+function RackCard({ rack, all, highlight, focusId, onLevels, onNote, onDelete, onAssign, onRemove, onBoxes }: {
+  focusId: string | null
   rack: StorageRack
   all: (PlacedMaterial & { where: string | null })[]
   highlight: Set<string> | null
@@ -206,7 +209,8 @@ function RackCard({ rack, all, highlight, onLevels, onNote, onDelete, onAssign, 
   const [editingNote, setEditingNote] = useState(false)
   const [note, setNote] = useState(rack.note ?? '')
   const [confirmDel, setConfirmDel] = useState(false)
-  const levels = Array.from({ length: rack.levels }, (_, i) => i + 1)
+  // de cima para baixo como na estante de verdade: a última prateleira em cima, P1 embaixo
+  const levels = Array.from({ length: rack.levels }, (_, i) => rack.levels - i)
   const byLevel = (lv: number) => rack.materials.filter((m) => m.rack_level === lv)
   const used = rack.materials.reduce((mx, m) => Math.max(mx, m.rack_level ?? 0), 0)
   const color = rackColor(rack.number)
@@ -262,7 +266,7 @@ function RackCard({ rack, all, highlight, onLevels, onNote, onDelete, onAssign, 
       </div>
       <div className="divide-y divide-neutral-100 dark:divide-neutral-700/60">
         {levels.map((lv) => (
-          <Level key={lv} level={lv} boxes={rack.shelves?.find((s) => s.level === lv)?.boxes ?? 0} items={byLevel(lv)} all={all} highlight={highlight}
+          <Level key={lv} level={lv} boxes={rack.shelves?.find((s) => s.level === lv)?.boxes ?? 0} items={byLevel(lv)} all={all} highlight={highlight} focusId={focusId}
             onAdd={(m, box) => {
               const to = locLabel(rack.number, lv, box)
               onAssign([m.id], lv, box, m.where ? `${m.sku ?? m.name} mudou de ${m.where} para ${to}.` : `${m.sku ?? m.name} guardado em ${to}.`)
@@ -277,8 +281,9 @@ function RackCard({ rack, all, highlight, onLevels, onNote, onDelete, onAssign, 
 // ── Prateleira (com caixas C1..Cn, ou sem caixas) ─────────────────────────
 type Where = PlacedMaterial & { where: string | null }
 
-function Level({ level, boxes, items, all, highlight, onAdd, onRemove, onBoxes }: {
+function Level({ level, boxes, items, all, highlight, focusId, onAdd, onRemove, onBoxes }: {
   level: number
+  focusId: string | null
   boxes: number
   items: PlacedMaterial[]
   all: Where[]
@@ -290,10 +295,32 @@ function Level({ level, boxes, items, all, highlight, onAdd, onRemove, onBoxes }
   const loose = items.filter((m) => !m.rack_box)
   const usedBox = items.reduce((mx, m) => Math.max(mx, m.rack_box ?? 0), 0)
   const boxNums = Array.from({ length: boxes }, (_, i) => i + 1)
+  // fechada por padrão (resumo numa linha); abre sozinha se tiver material buscado/destacado
+  const [open, setOpen] = useState(false)
+  const hit = items.some((m) => highlight?.has(m.id) || m.id === focusId)
+  useEffect(() => { if (hit) setOpen(true) }, [hit])
+  const n = items.length
+  const preview = items.slice(0, 3).map((m) => m.sku ?? m.name)
   return (
-    <div className="flex items-start gap-3 px-4 py-2.5">
-      <span className="mt-0.5 w-8 shrink-0 text-xs font-bold text-neutral-500 dark:text-neutral-400 tabular-nums">P{level}</span>
-      <div className="flex-1 min-w-0">
+    <div>
+    <div className="flex items-center gap-2 px-4 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition-colors">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className="flex-1 min-w-0 flex items-center gap-2 text-left">
+        <ChevronRight size={14} className={`shrink-0 text-neutral-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+        <span className="w-7 shrink-0 text-xs font-bold text-neutral-600 dark:text-neutral-300 tabular-nums">P{level}</span>
+        <span className="text-xs text-neutral-500 dark:text-neutral-400 tabular-nums whitespace-nowrap">
+          {n ? `${n} ${n === 1 ? 'item' : 'itens'}` : 'vazia'}
+        </span>
+        {!open && n > 0 && (
+          <span className="min-w-0 truncate font-mono text-[11px] text-neutral-400 dark:text-neutral-500">
+            {preview.join(' · ')}{n > 3 ? ` +${n - 3}` : ''}
+          </span>
+        )}
+      </button>
+      <BoxCounter boxes={boxes} usedBox={usedBox} onBoxes={(b) => { if (b > boxes) setOpen(true); onBoxes(b) }} />
+    </div>
+      {open && (
+      <div className="pl-[3.25rem] pr-4 pb-2.5">
         {boxes === 0 ? (
           <Slot items={loose} all={all} highlight={highlight} onAdd={(m) => onAdd(m, null)} onRemove={onRemove} />
         ) : (
@@ -313,6 +340,13 @@ function Level({ level, boxes, items, all, highlight, onAdd, onRemove, onBoxes }
           </div>
         )}
       </div>
+      )}
+    </div>
+  )
+}
+
+function BoxCounter({ boxes, usedBox, onBoxes }: { boxes: number; usedBox: number; onBoxes: (n: number) => void }) {
+  return (
       <div className="shrink-0 flex items-center gap-1" title="Caixas nesta prateleira">
         <button onClick={() => onBoxes(boxes - 1)} disabled={boxes <= 0 || boxes <= usedBox} aria-label="Tirar uma caixa"
           title={boxes > 0 && boxes <= usedBox ? `C${usedBox} ainda tem material` : 'Tirar uma caixa'}
@@ -321,7 +355,6 @@ function Level({ level, boxes, items, all, highlight, onAdd, onRemove, onBoxes }
         <button onClick={() => onBoxes(boxes + 1)} aria-label="Adicionar uma caixa" title="Adicionar uma caixa"
           className="p-0.5 rounded border border-neutral-300 dark:border-neutral-600 text-neutral-500 hover:border-brand-orange"><Plus size={11} /></button>
       </div>
-    </div>
   )
 }
 
